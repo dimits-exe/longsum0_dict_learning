@@ -7,9 +7,9 @@ import random
 import torch
 import numpy as np
 from nltk import tokenize
-from podcast_processor import PodcastEpisode
-from arxiv_processor import ResearchArticle
-from create_extractive_label import PodcastEpisodeXtra, ResearchArticleXtra
+from data.podcast_processor import PodcastEpisode
+from data.arxiv_processor import ResearchArticle
+from data.create_extractive_label import PodcastEpisodeXtra, ResearchArticleXtra
 
 
 # --------- Spotify Podcast --------- #

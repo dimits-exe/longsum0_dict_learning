@@ -5,8 +5,8 @@ from nltk import tokenize
 from rouge import Rouge
 rouge_pltrdy = Rouge()
 
-from podcast_processor import PodcastEpisode
-from arxiv_processor   import ResearchArticle
+from data.podcast_processor import PodcastEpisode
+from data.arxiv_processor   import ResearchArticle
 
 class PodcastEpisodeXtra(PodcastEpisode):
     def __init__(self, podcast_id, transcription, description, ext_label_path):

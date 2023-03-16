@@ -18,9 +18,9 @@ from transformers import BartTokenizer, BartForConditionalGeneration
 # This project
 from utils import parse_config, print_config, adjust_lr
 from batch_helper import load_podcast_data, load_articles, PodcastBatcher, ArticleBatcher
-from podcast_processor import PodcastEpisode
-from arxiv_processor import ResearchArticle
-from localattn import LoBART
+from data.podcast_processor import PodcastEpisode
+from data.arxiv_processor import ResearchArticle
+from models.localattn import LoBART
 
 def run_training(config_path):
     # Load Config
@@ -28,8 +28,12 @@ def run_training(config_path):
     print_config(config)
 
     # uses GPU in training or not
-    if torch.cuda.is_available() and config['use_gpu']: torch_device = 'cuda'
-    else: torch_device = 'cpu'
+    if torch.cuda.is_available() and config['use_gpu']:
+        print("Using GPU")
+        torch_device = 'cuda'
+    else:
+        print("Using CPU")
+        torch_device = 'cpu'
 
     bart_tokenizer = BartTokenizer.from_pretrained(config['bart_tokenizer'])
     if config['selfattn'] == 'full':

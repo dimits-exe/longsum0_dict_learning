@@ -1,10 +1,9 @@
-import os
-import sys
-import re
-import random
 import json
-import pandas
 import pickle
+import re
+import sys
+
+import pandas
 from nltk import tokenize
 from tqdm import tqdm
 
