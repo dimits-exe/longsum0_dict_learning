@@ -1,5 +1,8 @@
 import os
 import sys
+
+import transformers
+
 sys.path.insert(0, os.getcwd()+'/data/') # to import modules in data
 sys.path.insert(0, os.getcwd()+'/models/') # to import modules in models
 
@@ -35,14 +38,16 @@ def run_training(config_path):
         print("Using CPU")
         torch_device = 'cpu'
 
+    bart_config = transformers.BartConfig(encoder_layers=2, decoder_layers=2, vocab_size=50264)
     bart_tokenizer = BartTokenizer.from_pretrained(config['bart_tokenizer'])
+
     if config['selfattn'] == 'full':
-        bart_model  = BartForConditionalGeneration.from_pretrained(config['bart_weights'])
+        bart_model  = BartForConditionalGeneration.from_pretrained(pretrained_model_name_or_path=config['bart_weights'], config=bart_config)
     elif config['selfattn'] == 'local':
         window_width = config['window_width']
         xspan        = config['multiple_input_span']
         attention_window = [window_width] * 12 # different window size for each layer can be defined here too!
-        bart_model = LoBART.from_pretrained(config['bart_weights'])
+        bart_model = LoBART.from_pretrained(pretrained_model_name_or_path=config['bart_weights'], config=bart_config)
         bart_model.swap_fullattn_to_localattn(attention_window=attention_window)
         bart_model.expand_learned_embed_positions(multiple=xspan, cut=xspan*2)
     else:
