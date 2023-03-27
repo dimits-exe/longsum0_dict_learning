@@ -18,7 +18,7 @@ import matplotlib.ticker as ticker
 sys.path.insert(0, os.getcwd() + '/models/')  # to import modules in models
 sys.path.insert(0, os.getcwd() + '/data/')  # to import modules in models
 
-import models.autoencoder2 as autoencoder
+import models.autoencoder as autoencoder
 from data.lang import Lang
 
 
