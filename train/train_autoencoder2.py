@@ -1,4 +1,6 @@
 from io import open
+from typing import List
+
 import unicodedata
 import re
 import random
@@ -10,12 +12,18 @@ import sys
 import torch
 from torch import optim, nn
 
+import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
+
 sys.path.insert(0, os.getcwd() + '/models/')  # to import modules in models
 sys.path.insert(0, os.getcwd() + '/data/')  # to import modules in models
 
 import models.autoencoder2 as autoencoder
 from data.lang import Lang
 
+
+ITERATIONS = 15000
+PRINT_ITERATIONS = 500
 MAX_LENGTH = 10
 TEACHER_FORCING_RATIO = 0.5
 
@@ -44,12 +52,56 @@ def main():
 
     print("Using device ", DEVICE)
     print("Starting training...")
-    trainIters(encoder1, attn_decoder1, 75000, input_lang=input_lang, output_lang=output_lang,
-               pairs=pairs, print_every=100)
+    history = train(encoder1, attn_decoder1, ITERATIONS, input_lang=input_lang, output_lang=output_lang,
+                    pairs=pairs, print_every=PRINT_ITERATIONS)
+    print("Training ended.")
+
+    print("Sample translations: \n" + translate_random(encoder1, attn_decoder1, pairs, input_lang, output_lang))
+
+    print("Generating loss plot...")
+    showPlot(history)
 
 
-def train(input_tensor, target_tensor, encoder, decoder, encoder_optimizer, decoder_optimizer, criterion,
-          max_length=MAX_LENGTH):
+def train(encoder: autoencoder.EncoderRNN, decoder: autoencoder.AttnDecoderRNN, n_iters: int,
+          input_lang: Lang, output_lang: Lang,
+          pairs, print_every=1000, plot_every=100, learning_rate=0.01) -> List[float]:
+    start = time.time()
+    plot_losses = []
+    print_loss_total = 0  # Reset every print_every
+    plot_loss_total = 0  # Reset every plot_every
+
+    encoder_optimizer = optim.SGD(encoder.parameters(), lr=learning_rate)
+    decoder_optimizer = optim.SGD(decoder.parameters(), lr=learning_rate)
+    training_pairs = [tensorsFromPair(input_lang=input_lang, output_lang=output_lang, pair=random.choice(pairs))
+                      for _ in range(n_iters)]
+    criterion = nn.NLLLoss()
+
+    for i in range(1, n_iters + 1):
+        training_pair = training_pairs[i - 1]
+        input_tensor = training_pair[0]
+        target_tensor = training_pair[1]
+
+        loss = train_iteration(input_tensor, target_tensor, encoder,
+                               decoder, encoder_optimizer, decoder_optimizer, criterion)
+        print_loss_total += loss
+        plot_loss_total += loss
+
+        if i % print_every == 0:
+            print_loss_avg = print_loss_total / print_every
+            print_loss_total = 0
+            print('%s (%d %d%%) %.4f' % (timeSince(start, i / n_iters),
+                                         i, i / n_iters * 100, print_loss_avg))
+
+        if i % plot_every == 0:
+            plot_loss_avg = plot_loss_total / plot_every
+            plot_losses.append(plot_loss_avg)
+            plot_loss_total = 0
+
+    return plot_losses
+
+
+def train_iteration(input_tensor, target_tensor, encoder, decoder, encoder_optimizer, decoder_optimizer, criterion,
+                    max_length=MAX_LENGTH):
     encoder_hidden = encoder.initHidden()
 
     encoder_optimizer.zero_grad()
@@ -60,7 +112,7 @@ def train(input_tensor, target_tensor, encoder, decoder, encoder_optimizer, deco
 
     encoder_outputs = torch.zeros(max_length, encoder.hidden_size, device=DEVICE)
 
-    loss = 0
+    loss = torch.tensor([0.0], requires_grad=True)
 
     for ei in range(input_length):
         encoder_output, encoder_hidden = encoder(
@@ -101,44 +153,6 @@ def train(input_tensor, target_tensor, encoder, decoder, encoder_optimizer, deco
     return loss.item() / target_length
 
 
-def trainIters(encoder: autoencoder.EncoderRNN, decoder: autoencoder.AttnDecoderRNN, n_iters: int,
-               input_lang: Lang, output_lang: Lang,
-               pairs, print_every=1000, plot_every=100, learning_rate=0.01) -> None:
-    start = time.time()
-    plot_losses = []
-    print_loss_total = 0  # Reset every print_every
-    plot_loss_total = 0  # Reset every plot_every
-
-    encoder_optimizer = optim.SGD(encoder.parameters(), lr=learning_rate)
-    decoder_optimizer = optim.SGD(decoder.parameters(), lr=learning_rate)
-    training_pairs = [tensorsFromPair(input_lang=input_lang, output_lang=output_lang, pair=random.choice(pairs))
-                      for i in range(n_iters)]
-    criterion = nn.NLLLoss()
-
-    for iter in range(1, n_iters + 1):
-        training_pair = training_pairs[iter - 1]
-        input_tensor = training_pair[0]
-        target_tensor = training_pair[1]
-
-        loss = train(input_tensor, target_tensor, encoder,
-                     decoder, encoder_optimizer, decoder_optimizer, criterion)
-        print_loss_total += loss
-        plot_loss_total += loss
-
-        if iter % print_every == 0:
-            print_loss_avg = print_loss_total / print_every
-            print_loss_total = 0
-            print('%s (%d %d%%) %.4f' % (timeSince(start, iter / n_iters),
-                                         iter, iter / n_iters * 100, print_loss_avg))
-
-        if iter % plot_every == 0:
-            plot_loss_avg = plot_loss_total / plot_every
-            plot_losses.append(plot_loss_avg)
-            plot_loss_total = 0
-
-    # showPlot(plot_losses)
-
-
 def evaluate(encoder, decoder, sentence, input_lang: Lang, output_lang: Lang, max_length=MAX_LENGTH):
     with torch.no_grad():
         input_tensor = tensorFromSentence(input_lang, sentence)
@@ -173,6 +187,29 @@ def evaluate(encoder, decoder, sentence, input_lang: Lang, output_lang: Lang, ma
             decoder_input = topi.squeeze().detach()
 
         return decoded_words, decoder_attentions[:di + 1]
+
+
+def translate_random(encoder, decoder, pairs, input_lang: Lang, output_lang: Lang, n=10) -> str:
+    output = ""
+    for i in range(n):
+        pair = random.choice(pairs)
+        output += ">" + pair[0]
+        output += "=" + pair[1]
+        output_words, attentions = evaluate(encoder, decoder, pair[0],
+                                            input_lang=input_lang, output_lang=output_lang)
+        output_sentence = ' '.join(output_words)
+        output += "<" + output_sentence + "\n"
+
+    return output
+
+
+def showPlot(points):
+    plt.figure()
+    fig, ax = plt.subplots()
+    # this locator puts ticks at regular intervals
+    loc = ticker.MultipleLocator(base=0.2)
+    ax.yaxis.set_major_locator(loc)
+    plt.plot(points)
 
 
 def indexesFromSentence(lang, sentence):
@@ -212,12 +249,13 @@ def normalizeString(s):
 def readLangs(lang1: str, lang2: str, reverse=False):
     print("Reading lines...")
 
-    path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data\\datasets\\translations\\%s-%s.txt' % (lang1, lang2))
+    path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                        'data\\datasets\\translations\\%s-%s.txt' % (lang1, lang2))
     # Read the file and split into lines
     lines = open(path, encoding='utf-8').read().strip().split('\n')
 
     # Split every line into pairs and normalize
-    pairs = [[normalizeString(s) for s in l.split('\t')] for l in lines]
+    pairs = [[normalizeString(s) for s in line.split('\t')] for line in lines]
 
     # Reverse pairs, make Lang instances
     if reverse:
@@ -265,7 +303,7 @@ def asMinutes(s):
 def timeSince(since, percent):
     now = time.time()
     s = now - since
-    es = s / (percent)
+    es = s / percent
     rs = es - s
     return '%s (- %s)' % (asMinutes(s), asMinutes(rs))
 
