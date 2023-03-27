@@ -65,6 +65,9 @@ def main():
 def train(encoder: autoencoder.EncoderRNN, decoder: autoencoder.AttnDecoderRNN, n_iters: int,
           input_lang: Lang, output_lang: Lang,
           pairs, print_every=1000, plot_every=100, learning_rate=0.01) -> List[float]:
+    """
+    Train the encoder and decoder models acc
+    """
     start = time.time()
     plot_losses = []
     print_loss_total = 0  # Reset every print_every
@@ -112,7 +115,7 @@ def train_iteration(input_tensor, target_tensor, encoder, decoder, encoder_optim
 
     encoder_outputs = torch.zeros(max_length, encoder.hidden_size, device=DEVICE)
 
-    loss = torch.tensor([0.0], requires_grad=True)
+    loss = 0
 
     for ei in range(input_length):
         encoder_output, encoder_hidden = encoder(
