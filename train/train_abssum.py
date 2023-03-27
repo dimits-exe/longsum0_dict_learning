@@ -3,8 +3,8 @@ import sys
 
 import transformers
 
-sys.path.insert(0, os.getcwd()+'/data/') # to import modules in data
-sys.path.insert(0, os.getcwd()+'/models/') # to import modules in models
+sys.path.insert(0, os.getcwd()+'/data/')  # to import modules in data
+sys.path.insert(0, os.getcwd()+'/models/')  # to import modules in models
 
 import random
 from datetime import datetime
