@@ -1,6 +1,7 @@
 import configparser
 import collections
 
+
 def is_float(val):
     try:
         num = float(val)
@@ -8,12 +9,14 @@ def is_float(val):
         return False
     return True
 
+
 def is_int(val):
     try:
         num = int(val)
     except ValueError:
         return False
     return True
+
 
 def parse_config(config_section, config_path):
     """
@@ -35,6 +38,7 @@ def parse_config(config_section, config_path):
             config[key] = config_parser.get(config_section, key)
     return config
 
+
 def print_config(config):
     print("######## Config ########")
     for key, value in config.items():
@@ -44,8 +48,8 @@ def print_config(config):
 
 def adjust_lr(optimizer, step, lr0, warmup):
     """to adjust the learning rate"""
-    step = step + 1 # plus 1 to avoid ZeroDivisionError
-    lr = lr0 * min(step**(-0.5), step*(warmup**(-1.5)))
+    step = step + 1  # plus 1 to avoid ZeroDivisionError
+    lr = lr0 * min(step ** (-0.5), step * (warmup ** (-1.5)))
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
     return
