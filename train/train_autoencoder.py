@@ -25,11 +25,10 @@ from data.podcast_processor import PodcastEpisode
 from data.arxiv_processor import ResearchArticle
 from data.create_extractive_label import PodcastEpisodeXtra, ResearchArticleXtra
 
-
-
-ITERATIONS = 15000
-PRINT_ITERATIONS = 500
-MAX_LENGTH = 1000
+TRAINING_SAMPLES = 5000
+ITERATIONS = 1500
+PRINT_ITERATIONS = 20
+MAX_LENGTH = 20000
 TEACHER_FORCING_RATIO = 0.5
 
 SOS_TOKEN = 0
@@ -44,7 +43,8 @@ def main(input_type: str, path: str) -> None:
 
     hidden_size = 256
     encoder1 = autoencoder.EncoderRNN(input_lang.n_words, hidden_size, DEVICE).to(DEVICE)
-    attn_decoder1 = autoencoder.AttnDecoderRNN(hidden_size, output_lang.n_words, DEVICE, dropout_p=0.1).to(DEVICE)
+    attn_decoder1 = autoencoder.AttnDecoderRNN(hidden_size, output_lang.n_words, DEVICE,
+                                               dropout_p=0.1, max_length=MAX_LENGTH).to(DEVICE)
 
     print("Using device ", DEVICE)
     print("Starting training...")
@@ -195,8 +195,7 @@ def evaluate(encoder: autoencoder.EncoderRNN, decoder: torch.nn.Module, sentence
         encoder_outputs = torch.zeros(max_length, encoder.hidden_size, device=DEVICE)
 
         for ei in range(input_length):
-            encoder_output, encoder_hidden = encoder(input_tensor[ei],
-                                                     encoder_hidden)
+            encoder_output, encoder_hidden = encoder(input_tensor[ei], encoder_hidden)
             encoder_outputs[ei] += encoder_output[0, 0]
 
         decoder_input = torch.tensor([[SOS_TOKEN]], device=DEVICE)  # SOS
@@ -299,10 +298,14 @@ def readLangs(path: str) -> List[List[str]]:
     print("Reading documents...")
     articles = batch_helper.load_articles(path)
 
+    pairs = []
     # train on the whole text
-    pairs = [[" ".join(article.article_text), " ".join(article.article_text)] for article in articles]
+    for article in articles:
+        text = " ".join(article.abstract_text)
+        pairs.append([text, text])
 
-    return pairs
+    sample_count = min(TRAINING_SAMPLES, len(pairs))
+    return pairs[:sample_count]
 
 
 def prepareData(input_type: str, path: str) -> Tuple[Lang, Lang, List[List[str]]]:
