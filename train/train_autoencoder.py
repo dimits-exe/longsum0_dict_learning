@@ -1,5 +1,5 @@
 from io import open
-from typing import List
+from typing import List, Tuple
 
 import unicodedata
 import re
@@ -66,7 +66,17 @@ def train(encoder: autoencoder.EncoderRNN, decoder: autoencoder.AttnDecoderRNN, 
           input_lang: Lang, output_lang: Lang,
           pairs, print_every=1000, plot_every=100, learning_rate=0.01) -> List[float]:
     """
-    Train the encoder and decoder models acc
+    Train the autoencoder.
+    @param encoder: the encoder
+    @param decoder: the decoder
+    @param n_iters: the number of iterations
+    @param input_lang: the input language
+    @param output_lang: the output language
+    @param pairs: the translation pairs
+    @param print_every: number of iterations before an update print
+    @param plot_every: number of points in the returned history list
+    @param learning_rate: the learning rate of the optimizer
+    @return: a list containing the average loss for every plot_every training iterations
     """
     start = time.time()
     plot_losses = []
@@ -103,8 +113,21 @@ def train(encoder: autoencoder.EncoderRNN, decoder: autoencoder.AttnDecoderRNN, 
     return plot_losses
 
 
-def train_iteration(input_tensor, target_tensor, encoder, decoder, encoder_optimizer, decoder_optimizer, criterion,
-                    max_length=MAX_LENGTH):
+def train_iteration(input_tensor: torch.Tensor, target_tensor: torch.Tensor, encoder: autoencoder.EncoderRNN,
+                    decoder: torch.nn.Module, encoder_optimizer: torch.optim.optimizer,
+                    decoder_optimizer: torch.optim.optimizer, criterion, max_length: int = MAX_LENGTH) -> List[float]:
+    """
+    A single iteration of the training loop.
+    @param input_tensor: the tensor holding the embedded input string
+    @param target_tensor: the tensor holding the embedded desired output string
+    @param encoder: the encoder
+    @param decoder: the decoder
+    @param encoder_optimizer: the encoder's optimizer algorithm
+    @param decoder_optimizer: the decoder's optimizer algorithm
+    @param criterion: the loss criterion used in backpropagation
+    @param max_length: the maximum length of the sentence
+    @return: the total loss of the training iteration
+    """
     encoder_hidden = encoder.initHidden()
 
     encoder_optimizer.zero_grad()
@@ -156,7 +179,18 @@ def train_iteration(input_tensor, target_tensor, encoder, decoder, encoder_optim
     return loss.item() / target_length
 
 
-def evaluate(encoder, decoder, sentence, input_lang: Lang, output_lang: Lang, max_length=MAX_LENGTH):
+def evaluate(encoder: autoencoder.EncoderRNN, decoder: torch.nn.Module, sentence: str, input_lang: Lang,
+             output_lang: Lang, max_length=MAX_LENGTH) -> Tuple[List[str], torch.Tensor]:
+    """
+    Get the translation for an arbitrary sentence.
+    @param encoder: the encoder
+    @param decoder: the decoder
+    @param sentence: the sentence to be translated
+    @param input_lang: the input language
+    @param output_lang: the output language
+    @param max_length: the max length of the sentence
+    @return: the translated words and attention mappings
+    """
     with torch.no_grad():
         input_tensor = tensorFromSentence(input_lang, sentence)
         input_length = input_tensor.size()[0]
@@ -192,7 +226,18 @@ def evaluate(encoder, decoder, sentence, input_lang: Lang, output_lang: Lang, ma
         return decoded_words, decoder_attentions[:di + 1]
 
 
-def translate_random(encoder, decoder, pairs, input_lang: Lang, output_lang: Lang, n=10) -> str:
+def translate_random(encoder: autoencoder.EncoderRNN, decoder: torch.nn.Module, pairs: List[str, str],
+                     input_lang: Lang, output_lang: Lang, n=10) -> str:
+    """
+    Translate N random sentences.
+    @param encoder: the encoder
+    @param decoder: the decoder
+    @param pairs: the pairs from which the selection will occur
+    @param input_lang: the input language
+    @param output_lang: the output language
+    @param n: the number of translations to be picked
+    @return: A string representing the original, original translation, and generated translation of N random sentences
+    """
     output = ""
     for i in range(n):
         pair = random.choice(pairs)
@@ -250,6 +295,9 @@ def normalizeString(s):
 
 
 def readLangs(lang1: str, lang2: str, reverse=False):
+    """
+    Read the input data and generate language objects holding them.
+    """
     print("Reading lines...")
 
     path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
