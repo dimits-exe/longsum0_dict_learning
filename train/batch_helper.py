@@ -9,6 +9,11 @@ import torch
 import numpy as np
 from nltk import tokenize
 
+# needed for pickle
+from data.podcast_processor import PodcastEpisode
+from data.arxiv_processor import ResearchArticle
+from data.create_extractive_label import PodcastEpisodeXtra, ResearchArticleXtra
+
 # --------- Spotify Podcast --------- #
 # DEFINE PATH HERE:
 BRASS_SET_PATH = "data/spotify-podcasts/summarisation-task-brass-set/filtered-episode-ids.txt"
@@ -253,14 +258,14 @@ class HierPodcastBatcher(PodcastBatcher):
         """
         return input, u_len, w_len, target, tgt_len, ext_label
         """
-        input_tensor = np.zeros((batch_size, self.num_utterances, self.num_words), dtype=np.long)
-        u_len = np.zeros(batch_size, dtype=np.long)
+        input = np.zeros((batch_size, self.num_utterances, self.num_words), dtype=np.long)
+        u_len = np.zeros((batch_size), dtype=np.long)
         w_len = np.zeros((batch_size, self.num_utterances), dtype=np.long)
         ext_target = np.zeros((batch_size, self.num_utterances), dtype=np.float32)
 
         target = np.zeros((batch_size, self.summary_length), dtype=np.long)
         target.fill(103)  # in BERT 103 is [MASK] --- I should've used 0, which is pad_token
-        tgt_len = np.zeros(batch_size, dtype=np.int)
+        tgt_len = np.zeros((batch_size), dtype=np.int)
 
         batch_count = 0
         while batch_count < batch_size:
@@ -282,7 +287,7 @@ class HierPodcastBatcher(PodcastBatcher):
                 if utt_len > self.num_words:
                     utt_len = self.num_words
                     token_ids = token_ids[:self.num_words]
-                input_tensor[batch_count, j, :utt_len] = token_ids
+                input[batch_count, j, :utt_len] = token_ids
                 w_len[batch_count, j] = utt_len
 
             # Extractive Sum Label
@@ -311,13 +316,13 @@ class HierPodcastBatcher(PodcastBatcher):
         u_len_max = u_len.max()
         w_len_max = w_len.max()
 
-        input_tensor = torch.from_numpy(input_tensor[:, :u_len_max, :w_len_max]).to(self.device)
+        input = torch.from_numpy(input[:, :u_len_max, :w_len_max]).to(self.device)
         u_len = torch.from_numpy(u_len).to(self.device)
         w_len = torch.from_numpy(w_len[:, :u_len_max]).to(self.device)
         target = torch.from_numpy(target).to(self.device)
         ext_target = torch.from_numpy(ext_target[:, :u_len_max]).to(self.device)
 
-        return input_tensor, u_len, w_len, target, tgt_len, ext_target
+        return input, u_len, w_len, target, tgt_len, ext_target
 
 
 class HierArticleBatcher(ArticleBatcher):
@@ -333,14 +338,14 @@ class HierArticleBatcher(ArticleBatcher):
         """
         return input, u_len, w_len, target, tgt_len, ext_label
         """
-        input_array = np.zeros((batch_size, self.num_utterances, self.num_words), dtype=np.long)
-        u_len = np.zeros(batch_size, dtype=np.long)
+        input = np.zeros((batch_size, self.num_utterances, self.num_words), dtype=np.long)
+        u_len = np.zeros((batch_size), dtype=np.long)
         w_len = np.zeros((batch_size, self.num_utterances), dtype=np.long)
         ext_target = np.zeros((batch_size, self.num_utterances), dtype=np.float32)
 
         target = np.zeros((batch_size, self.summary_length), dtype=np.long)
         target.fill(103)  # in BERT 103 is [MASK] --- I should've used 0, which is pad_token
-        tgt_len = np.zeros(batch_size, dtype=np.int)
+        tgt_len = np.zeros((batch_size), dtype=np.int)
 
         batch_count = 0
         while batch_count < batch_size:
@@ -358,7 +363,7 @@ class HierArticleBatcher(ArticleBatcher):
                 if utt_len > self.num_words:
                     utt_len = self.num_words
                     token_ids = token_ids[:self.num_words]
-                input_array[batch_count, j, :utt_len] = token_ids
+                input[batch_count, j, :utt_len] = token_ids
                 w_len[batch_count, j] = utt_len
 
             # Extractive Sum Label
@@ -387,10 +392,10 @@ class HierArticleBatcher(ArticleBatcher):
         u_len_max = u_len.max()
         w_len_max = w_len.max()
 
-        input_array = torch.from_numpy(input_array[:, :u_len_max, :w_len_max]).to(self.device)
+        input = torch.from_numpy(input[:, :u_len_max, :w_len_max]).to(self.device)
         u_len = torch.from_numpy(u_len).to(self.device)
         w_len = torch.from_numpy(w_len[:, :u_len_max]).to(self.device)
         target = torch.from_numpy(target).to(self.device)
         ext_target = torch.from_numpy(ext_target[:, :u_len_max]).to(self.device)
 
-        return input_array, u_len, w_len, target, tgt_len, ext_target
+        return input, u_len, w_len, target, tgt_len, ext_target

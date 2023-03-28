@@ -1,19 +1,18 @@
-from io import open
-from typing import List, Tuple
-
-import unicodedata
-import re
-import random
-import time
 import math
 import os
+import random
+import re
 import sys
-
-import torch
-from torch import optim, nn
+import time
+from typing import List, Tuple
 
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
+import torch
+import unicodedata
+from torch import optim, nn
+
+from train import batch_helper
 
 sys.path.insert(0, os.getcwd() + '/models/')  # to import modules in models
 sys.path.insert(0, os.getcwd() + '/data/')  # to import modules in models
@@ -21,29 +20,26 @@ sys.path.insert(0, os.getcwd() + '/data/')  # to import modules in models
 import models.autoencoder as autoencoder
 from data.lang import Lang
 
+# needed for pickle
+from data.podcast_processor import PodcastEpisode
+from data.arxiv_processor import ResearchArticle
+from data.create_extractive_label import PodcastEpisodeXtra, ResearchArticleXtra
+
+
 
 ITERATIONS = 15000
 PRINT_ITERATIONS = 500
-MAX_LENGTH = 10
+MAX_LENGTH = 1000
 TEACHER_FORCING_RATIO = 0.5
 
 SOS_TOKEN = 0
 EOS_TOKEN = 1
 
-ENG_PREFIXES = (
-    "i am ", "i m ",
-    "he is", "he s ",
-    "she is", "she s ",
-    "you are", "you re ",
-    "we are", "we re ",
-    "they are", "they re "
-)
-
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-def main():
-    input_lang, output_lang, pairs = prepareData('eng', 'fra', True)
+def main(input_type: str, path: str) -> None:
+    input_lang, output_lang, pairs = prepareData(input_type, path)
     print(random.choice(pairs))
 
     hidden_size = 256
@@ -114,8 +110,8 @@ def train(encoder: autoencoder.EncoderRNN, decoder: autoencoder.AttnDecoderRNN, 
 
 
 def train_iteration(input_tensor: torch.Tensor, target_tensor: torch.Tensor, encoder: autoencoder.EncoderRNN,
-                    decoder: torch.nn.Module, encoder_optimizer: torch.optim.optimizer,
-                    decoder_optimizer: torch.optim.optimizer, criterion, max_length: int = MAX_LENGTH) -> List[float]:
+                    decoder: torch.nn.Module, encoder_optimizer: torch.optim,
+                    decoder_optimizer: torch.optim, criterion, max_length: int = MAX_LENGTH) -> List[float]:
     """
     A single iteration of the training loop.
     @param input_tensor: the tensor holding the embedded input string
@@ -226,7 +222,7 @@ def evaluate(encoder: autoencoder.EncoderRNN, decoder: torch.nn.Module, sentence
         return decoded_words, decoder_attentions[:di + 1]
 
 
-def translate_random(encoder: autoencoder.EncoderRNN, decoder: torch.nn.Module, pairs: List[str, str],
+def translate_random(encoder: autoencoder.EncoderRNN, decoder: torch.nn.Module, pairs: List[List[str]],
                      input_lang: Lang, output_lang: Lang, n=10) -> str:
     """
     Translate N random sentences.
@@ -287,62 +283,61 @@ def unicodeToAscii(s):
 
 # Lowercase, trim, and remove non-letter characters
 
-def normalizeString(s):
+def preprocess(s):
     s = unicodeToAscii(s.lower().strip())
     s = re.sub(r"([.!?])", r" \1", s)
     s = re.sub(r"[^a-zA-Z.!?]+", r" ", s)
     return s
 
 
-def readLangs(lang1: str, lang2: str, reverse=False):
+def readLangs(path: str) -> List[List[str]]:
     """
-    Read the input data and generate language objects holding them.
+    Read, preprocess and return a list containing the input documents.
+    @param path: the path to the .bin file containing the input documents
+    @return: a list containing the documents in pairs with themselves
     """
-    print("Reading lines...")
+    print("Reading documents...")
+    articles = batch_helper.load_articles(path)
 
-    path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
-                        'data\\datasets\\translations\\%s-%s.txt' % (lang1, lang2))
-    # Read the file and split into lines
-    lines = open(path, encoding='utf-8').read().strip().split('\n')
+    # train on the whole text
+    pairs = [[" ".join(article.article_text), " ".join(article.article_text)] for article in articles]
 
-    # Split every line into pairs and normalize
-    pairs = [[normalizeString(s) for s in line.split('\t')] for line in lines]
+    return pairs
 
-    # Reverse pairs, make Lang instances
-    if reverse:
-        pairs = [list(reversed(p)) for p in pairs]
-        input_lang = Lang(lang2)
-        output_lang = Lang(lang1)
+
+def prepareData(input_type: str, path: str) -> Tuple[Lang, Lang, List[List[str]]]:
+    """
+    Read the input documents and use them to create the necessary language objects.
+    @param input_type: "arxiv" or "pubmed" depending on the dataset used
+    @param path: the path to the data .bin file
+    @return: the input and output language objects and the input and output document pairs
+    """
+
+    # TODO: utilize validation data
+    if input_type == "arxiv":
+        train_data_path = "{}/arxiv_train.pk.bin".format(path)
+        val_data_path = "{}/arxiv_val.pk.bin".format(path)
+    elif input_type == "pubmed":
+        train_data_path = "{}/pubmed_train.pk.bin".format(path)
+        val_data_path = "{}/pubmed_val.pk.bin".format(path)
     else:
-        input_lang = Lang(lang1)
-        output_lang = Lang(lang2)
+        raise NotImplementedError("Input type must be either 'arxiv' or 'pubmed', not " + input_type)
 
-    return input_lang, output_lang, pairs
+    # we will use a single language object as both input and output
+    lang = Lang("article")
 
-
-def filterPair(p):
-    return len(p[0].split(' ')) < MAX_LENGTH and \
-           len(p[1].split(' ')) < MAX_LENGTH and \
-           p[1].startswith(ENG_PREFIXES)
-
-
-def filterPairs(pairs):
-    return [pair for pair in pairs if filterPair(pair)]
-
-
-def prepareData(lang1, lang2, reverse=False):
-    input_lang, output_lang, pairs = readLangs(lang1, lang2, reverse)
+    pairs = readLangs(train_data_path)
     print("Read %s sentence pairs" % len(pairs))
-    pairs = filterPairs(pairs)
-    print("Trimmed to %s sentence pairs" % len(pairs))
+
     print("Counting words...")
     for pair in pairs:
-        input_lang.addSentence(pair[0])
-        output_lang.addSentence(pair[1])
+        lang.addSentence(pair[0])
+
+    # debug
     print("Counted words:")
-    print(input_lang.name, input_lang.n_words)
-    print(output_lang.name, output_lang.n_words)
-    return input_lang, output_lang, pairs
+    print(lang.name, lang.n_words)
+
+    return lang, lang, pairs
 
 
 def asMinutes(s):
@@ -360,4 +355,9 @@ def timeSince(since, percent):
 
 
 if __name__ == "__main__":
-    main()
+    print(sys.argv)
+    if len(sys.argv) == 3:
+        main(sys.argv[1], sys.argv[2])
+    else:
+        print("Usage: python train_autoencoder.py input_type data_path")
+        print("\tWhere input_type one of 'arxiv', 'pubmed' depending on the dataset used")
