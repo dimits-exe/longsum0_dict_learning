@@ -1,0 +1,21 @@
+[config]
+bart_weights   = facebook/bart-large-cnn
+bart_tokenizer = facebook/bart-large
+model_name     = autoencoder
+save_dir       = trained_models
+dataset        = arxiv
+data_dir       = C:/Users/user/Documents/university/research/dict_learning/data/data/arxiv
+optimizer      = adam
+max_target_len = 400
+lr0            = 0.002
+warmup         = 20000
+batch_size     = 1
+gradient_accum = 2
+valid_step     = 1000
+total_step     = 100
+early_stop     = 3
+random_seed    = 2525
+use_gpu        = True
+selfattn       = full
+multiple_input_span = 2
+window_width        = 256

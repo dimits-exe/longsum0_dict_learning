@@ -1,373 +1,202 @@
-import math
+import train_abssum
+
 import os
-import random
-import re
 import sys
-import time
-from typing import List, Tuple
 
-import matplotlib.pyplot as plt
-import matplotlib.ticker as ticker
-import torch
-import unicodedata
-from torch import optim, nn
+import transformers
 
-from train import batch_helper
-
+sys.path.insert(0, os.getcwd() + '/data/')  # to import modules in data
 sys.path.insert(0, os.getcwd() + '/models/')  # to import modules in models
-sys.path.insert(0, os.getcwd() + '/data/')  # to import modules in models
 
-import models.autoencoder as autoencoder
-from data.lang import Lang
+import random
+from datetime import datetime
 
-# needed for pickle
+# PyTorch
+import torch
+import torch.nn as nn
+import torch.optim as optim
+
+# HuggingFace
+from transformers import BartTokenizer, BartForConditionalGeneration
+
+# This project
+from utils import parse_config, print_config, adjust_lr
+from batch_helper import load_podcast_data, load_articles, PodcastBatcher, ArticleBatcher
 from data.podcast_processor import PodcastEpisode
 from data.arxiv_processor import ResearchArticle
-from data.create_extractive_label import PodcastEpisodeXtra, ResearchArticleXtra
-
-TRAINING_SAMPLES = 5000
-ITERATIONS = 1500
-PRINT_ITERATIONS = 20
-MAX_LENGTH = 20000
-TEACHER_FORCING_RATIO = 0.5
-
-SOS_TOKEN = 0
-EOS_TOKEN = 1
-
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+from models.localattn import LoBART
 
 
-def main(input_type: str, path: str) -> None:
-    input_lang, output_lang, pairs = prepareData(input_type, path)
-    print(random.choice(pairs))
-
-    hidden_size = 256
-    encoder1 = autoencoder.EncoderRNN(input_lang.n_words, hidden_size, DEVICE).to(DEVICE)
-    attn_decoder1 = autoencoder.AttnDecoderRNN(hidden_size, output_lang.n_words, DEVICE,
-                                               dropout_p=0.1, max_length=MAX_LENGTH).to(DEVICE)
-
-    print("Using device ", DEVICE)
-    print("Starting training...")
-    history = train(encoder1, attn_decoder1, ITERATIONS, input_lang=input_lang, output_lang=output_lang,
-                    pairs=pairs, print_every=PRINT_ITERATIONS)
-    print("Training ended.")
-
-    print("Sample translations: \n" + translate_random(encoder1, attn_decoder1, pairs, input_lang, output_lang))
-
-    print("Generating loss plot...")
-    showPlot(history)
+MODEL_DIR = "trained_models"
+MODEL_FILE_NAME = "autoencoder.pt"
 
 
-def train(encoder: autoencoder.EncoderRNN, decoder: autoencoder.AttnDecoderRNN, n_iters: int,
-          input_lang: Lang, output_lang: Lang,
-          pairs, print_every=1000, plot_every=100, learning_rate=0.01) -> List[float]:
+def run_training(config_path) -> None:
     """
-    Train the autoencoder.
-    @param encoder: the encoder
-    @param decoder: the decoder
-    @param n_iters: the number of iterations
-    @param input_lang: the input language
-    @param output_lang: the output language
-    @param pairs: the translation pairs
-    @param print_every: number of iterations before an update print
-    @param plot_every: number of points in the returned history list
-    @param learning_rate: the learning rate of the optimizer
-    @return: a list containing the average loss for every plot_every training iterations
+    Runs training for the pretrained BERT autoencoder. Modified version of the original code training the abssum model,
+    where we also save the final model to a custom path (MODEL_PATH).
+    @param config_path: the path to the config file
     """
-    start = time.time()
-    plot_losses = []
-    print_loss_total = 0  # Reset every print_every
-    plot_loss_total = 0  # Reset every plot_every
+    # Load Config
+    state = None
+    config = parse_config("config", config_path)
+    print_config(config)
 
-    encoder_optimizer = optim.SGD(encoder.parameters(), lr=learning_rate)
-    decoder_optimizer = optim.SGD(decoder.parameters(), lr=learning_rate)
-    training_pairs = [tensorsFromPair(input_lang=input_lang, output_lang=output_lang, pair=random.choice(pairs))
-                      for _ in range(n_iters)]
-    criterion = nn.NLLLoss()
-
-    for i in range(1, n_iters + 1):
-        training_pair = training_pairs[i - 1]
-        input_tensor = training_pair[0]
-        target_tensor = training_pair[1]
-
-        loss = train_iteration(input_tensor, target_tensor, encoder,
-                               decoder, encoder_optimizer, decoder_optimizer, criterion)
-        print_loss_total += loss
-        plot_loss_total += loss
-
-        if i % print_every == 0:
-            print_loss_avg = print_loss_total / print_every
-            print_loss_total = 0
-            print('%s (%d %d%%) %.4f' % (timeSince(start, i / n_iters),
-                                         i, i / n_iters * 100, print_loss_avg))
-
-        if i % plot_every == 0:
-            plot_loss_avg = plot_loss_total / plot_every
-            plot_losses.append(plot_loss_avg)
-            plot_loss_total = 0
-
-    return plot_losses
-
-
-def train_iteration(input_tensor: torch.Tensor, target_tensor: torch.Tensor, encoder: autoencoder.EncoderRNN,
-                    decoder: torch.nn.Module, encoder_optimizer: torch.optim,
-                    decoder_optimizer: torch.optim, criterion, max_length: int = MAX_LENGTH) -> List[float]:
-    """
-    A single iteration of the training loop.
-    @param input_tensor: the tensor holding the embedded input string
-    @param target_tensor: the tensor holding the embedded desired output string
-    @param encoder: the encoder
-    @param decoder: the decoder
-    @param encoder_optimizer: the encoder's optimizer algorithm
-    @param decoder_optimizer: the decoder's optimizer algorithm
-    @param criterion: the loss criterion used in backpropagation
-    @param max_length: the maximum length of the sentence
-    @return: the total loss of the training iteration
-    """
-    encoder_hidden = encoder.initHidden()
-
-    encoder_optimizer.zero_grad()
-    decoder_optimizer.zero_grad()
-
-    input_length = input_tensor.size(0)
-    target_length = target_tensor.size(0)
-
-    encoder_outputs = torch.zeros(max_length, encoder.hidden_size, device=DEVICE)
-
-    loss = 0
-
-    for ei in range(input_length):
-        encoder_output, encoder_hidden = encoder(
-            input_tensor[ei], encoder_hidden)
-        encoder_outputs[ei] = encoder_output[0, 0]
-
-    decoder_input = torch.tensor([[SOS_TOKEN]], device=DEVICE)
-
-    decoder_hidden = encoder_hidden
-
-    use_teacher_forcing = True if random.random() < TEACHER_FORCING_RATIO else False
-
-    if use_teacher_forcing:
-        # Teacher forcing: Feed the target as the next input
-        for di in range(target_length):
-            decoder_output, decoder_hidden, decoder_attention = decoder(
-                decoder_input, decoder_hidden, encoder_outputs)
-            loss += criterion(decoder_output, target_tensor[di])
-            decoder_input = target_tensor[di]  # Teacher forcing
-
+    # uses GPU in training or not
+    if torch.cuda.is_available() and config['use_gpu']:
+        print("Using GPU")
+        torch_device = 'cuda'
     else:
-        # Without teacher forcing: use its own predictions as the next input
-        for di in range(target_length):
-            decoder_output, decoder_hidden, decoder_attention = decoder(
-                decoder_input, decoder_hidden, encoder_outputs)
-            topv, topi = decoder_output.topk(1)
-            decoder_input = topi.squeeze().detach()  # detach from history as input
+        print("Using CPU")
+        torch_device = 'cpu'
 
-            loss += criterion(decoder_output, target_tensor[di])
-            if decoder_input.item() == EOS_TOKEN:
-                break
+    bart_config = transformers.BartConfig(encoder_layers=2, decoder_layers=2, vocab_size=50264)
+    bart_tokenizer = BartTokenizer.from_pretrained(config['bart_tokenizer'])
 
-    loss.backward()
+    if config['selfattn'] == 'full':
+        bart_model = BartForConditionalGeneration.from_pretrained(pretrained_model_name_or_path=config['bart_weights'],
+                                                                  config=bart_config)
+    elif config['selfattn'] == 'local':
+        window_width = config['window_width']
+        xspan = config['multiple_input_span']
+        attention_window = [window_width] * 12  # different window size for each layer can be defined here too!
+        bart_model = LoBART.from_pretrained(pretrained_model_name_or_path=config['bart_weights'], config=bart_config)
+        bart_model.swap_fullattn_to_localattn(attention_window=attention_window)
+        bart_model.expand_learned_embed_positions(multiple=xspan, cut=xspan * 2)
+    else:
+        raise ValueError("selfattn: full (BART) | local (LoBART)")
+    bart_config = bart_model.config
 
-    encoder_optimizer.step()
-    decoder_optimizer.step()
+    # print out model details for future reference
+    print(bart_model)
+    print(bart_config)
+    print("#parameters:", sum(p.numel() for p in bart_model.parameters() if p.requires_grad))
+    if torch_device == 'cuda':
+        bart_model.cuda()
 
-    return loss.item() / target_length
+    # Optimizer --- currently only support Adam
+    if config['optimizer'] == 'adam':
+        # lr here doesn't matter as it will be changed by .adjust_lr()
+        optimizer = optim.Adam(filter(lambda p: p.requires_grad, bart_model.parameters()), lr=0.001, betas=(0.9, 0.999),
+                               eps=1e-08, weight_decay=0)
+        optimizer.zero_grad()
+    else:
+        raise ValueError("Current version only supports Adam")
 
+    # Data ---- podcast | arxiv | pubmed
+    if config['dataset'] == 'podcast':
+        train_data = load_podcast_data(config['data_dir'],
+                                       sets=[10])  # -1 = training set, -1 means set0,..,set9 (excluding 10)
+        val_data = load_podcast_data(config['data_dir'], sets=[10])  # 10 = valid set
+        batcher = PodcastBatcher(bart_tokenizer, bart_config, config['max_target_len'], train_data, torch_device)
+        val_batcher = PodcastBatcher(bart_tokenizer, bart_config, config['max_target_len'], val_data, torch_device)
+    elif config['dataset'] == 'arxiv':
+        # train_data  = load_articles("{}/arxiv_train.pk.bin".format(config['data_dir']))
+        train_data = load_articles("{}/arxiv_val.pk.bin".format(config['data_dir']))
+        val_data = load_articles("{}/arxiv_val.pk.bin".format(config['data_dir']))
+        batcher = ArticleBatcher(bart_tokenizer, bart_config, config['max_target_len'], train_data, torch_device)
+        val_batcher = ArticleBatcher(bart_tokenizer, bart_config, config['max_target_len'], val_data, torch_device)
+    elif config['dataset'] == 'pubmed':
+        train_data = load_articles("{}/pubmed_train.pk.bin".format(config['data_dir']))
+        val_data = load_articles("{}/pubmed_val.pk.bin".format(config['data_dir']))
+        batcher = ArticleBatcher(bart_tokenizer, bart_config, config['max_target_len'], train_data, torch_device)
+        val_batcher = ArticleBatcher(bart_tokenizer, bart_config, config['max_target_len'], val_data, torch_device)
+    else:
+        raise ValueError("Dataset not exist: only |podcast|arxiv|pubmed|")
 
-def evaluate(encoder: autoencoder.EncoderRNN, decoder: torch.nn.Module, sentence: str, input_lang: Lang,
-             output_lang: Lang, max_length=MAX_LENGTH) -> Tuple[List[str], torch.Tensor]:
-    """
-    Get the translation for an arbitrary sentence.
-    @param encoder: the encoder
-    @param decoder: the decoder
-    @param sentence: the sentence to be translated
-    @param input_lang: the input language
-    @param output_lang: the output language
-    @param max_length: the max length of the sentence
-    @return: the translated words and attention mappings
-    """
-    with torch.no_grad():
-        input_tensor = tensorFromSentence(input_lang, sentence)
-        input_length = input_tensor.size()[0]
-        encoder_hidden = encoder.initHidden()
+    # Criterion
+    criterion = nn.CrossEntropyLoss(
+        reduction='none')  # This criterion combines nn.LogSoftmax() and nn.NLLLoss() in one single class.
 
-        encoder_outputs = torch.zeros(max_length, encoder.hidden_size, device=DEVICE)
+    training_step = 0
+    best_val_loss = 9e9
+    stop_counter = 0
+    batch_size = config['batch_size']
+    lr0 = config['lr0']
+    warmup = config['warmup']
+    gradient_accum = config['gradient_accum']
+    valid_step = config['valid_step']
+    total_step = config['total_step']
+    early_stop = config['early_stop']
+    random_seed = config['random_seed']
 
-        for ei in range(input_length):
-            encoder_output, encoder_hidden = encoder(input_tensor[ei], encoder_hidden)
-            encoder_outputs[ei] += encoder_output[0, 0]
+    # Randomness
+    random.seed(random_seed)
+    torch.manual_seed(random_seed)
 
-        decoder_input = torch.tensor([[SOS_TOKEN]], device=DEVICE)  # SOS
+    # shuffle data
+    batcher.shuffle_data()
+    bart_model.train()  # by default, it's not training!!!
 
-        decoder_hidden = encoder_hidden
+    while training_step < total_step:
 
-        decoded_words = []
-        decoder_attentions = torch.zeros(max_length, max_length)
+        input_ids, attention_mask, target_ids, target_attention_mask = batcher.get_a_batch(
+            batch_size, translate_to_self=True, pad_to_max_length=False)
+        shifted_target_ids, shifted_target_attention_mask = batcher.shifted_target_left(target_ids,
+                                                                                        target_attention_mask)
 
-        for di in range(max_length):
-            decoder_output, decoder_hidden, decoder_attention = decoder(
-                decoder_input, decoder_hidden, encoder_outputs)
-            decoder_attentions[di] = decoder_attention.data
-            topv, topi = decoder_output.data.topk(1)
-            if topi.item() == EOS_TOKEN:
-                decoded_words.append('<EOS>')
-                break
+        # BART forward
+        x = bart_model(
+            input_ids=input_ids, attention_mask=attention_mask,
+            decoder_input_ids=target_ids, decoder_attention_mask=target_attention_mask,
+        )
+        # x[0] # decoder output
+        # x[1] # encoder output
+        lm_logits = x[0]
+
+        loss = criterion(lm_logits.view(-1, bart_config.vocab_size), shifted_target_ids.view(-1))
+        shifted_target_attention_mask = shifted_target_attention_mask.view(-1)
+        loss = (loss * shifted_target_attention_mask).sum() / shifted_target_attention_mask.sum()
+        loss.backward()
+
+        if training_step % gradient_accum == 0:
+            adjust_lr(optimizer, training_step, lr0, warmup)
+            optimizer.step()
+            optimizer.zero_grad()
+
+        if training_step % 10 == 0:
+            print("[{}] step {}/{}: loss = {:.5f}".format(str(datetime.now()), training_step, total_step, loss))
+            sys.stdout.flush()
+
+        if training_step % valid_step == 0 and training_step > 0:
+            bart_model.eval()
+            with torch.no_grad():
+                valid_loss = train_abssum.validation(bart_model, bart_config, val_batcher, batch_size)
+            print("Valid Loss = {:.5f}".format(valid_loss))
+            bart_model.train()
+            if valid_loss < best_val_loss:
+                stop_counter = 0
+                best_val_loss = valid_loss
+                print("Model improved".format(stop_counter))
             else:
-                decoded_words.append(output_lang.index2word[topi.item()])
+                stop_counter += 1
+                print("Model not improved #{}".format(stop_counter))
+                if stop_counter == early_stop:
+                    print("Stop training!")
+                    return
 
-            decoder_input = topi.squeeze().detach()
+            state = {
+                'training_step': training_step,
+                'model': bart_model.state_dict(),
+                'optimizer': optimizer.state_dict(),
+                'best_val_loss': best_val_loss
+            }
+            savepath = "{}/{}-step{}.pt".format(config['save_dir'], config['model_name'], training_step)
+            torch.save(state, savepath)
+            print("Saved at {}".format(savepath))
 
-        return decoded_words, decoder_attentions[:di + 1]
+        training_step += 1
 
+    # save final model
+    os.makedirs(MODEL_DIR, exist_ok=True)
+    path = os.path.join(MODEL_DIR, MODEL_FILE_NAME)
+    torch.save(state, path)
 
-def translate_random(encoder: autoencoder.EncoderRNN, decoder: torch.nn.Module, pairs: List[List[str]],
-                     input_lang: Lang, output_lang: Lang, n=10) -> str:
-    """
-    Translate N random sentences.
-    @param encoder: the encoder
-    @param decoder: the decoder
-    @param pairs: the pairs from which the selection will occur
-    @param input_lang: the input language
-    @param output_lang: the output language
-    @param n: the number of translations to be picked
-    @return: A string representing the original, original translation, and generated translation of N random sentences
-    """
-    output = ""
-    for i in range(n):
-        pair = random.choice(pairs)
-        output += ">" + pair[0]
-        output += "=" + pair[1]
-        output_words, attentions = evaluate(encoder, decoder, pair[0],
-                                            input_lang=input_lang, output_lang=output_lang)
-        output_sentence = ' '.join(output_words)
-        output += "<" + output_sentence + "\n"
-
-    return output
-
-
-def showPlot(points):
-    plt.figure()
-    fig, ax = plt.subplots()
-    # this locator puts ticks at regular intervals
-    loc = ticker.MultipleLocator(base=0.2)
-    ax.yaxis.set_major_locator(loc)
-    plt.plot(points)
-
-
-def indexesFromSentence(lang, sentence):
-    return [lang.word2index[word] for word in sentence.split(' ')]
-
-
-def tensorFromSentence(lang, sentence):
-    indexes = indexesFromSentence(lang, sentence)
-    indexes.append(EOS_TOKEN)
-    return torch.tensor(indexes, dtype=torch.long, device=DEVICE).view(-1, 1)
-
-
-def tensorsFromPair(input_lang, output_lang, pair):
-    input_tensor = tensorFromSentence(input_lang, pair[0])
-    target_tensor = tensorFromSentence(output_lang, pair[1])
-    return input_tensor, target_tensor
-
-
-def unicodeToAscii(s: str) -> str:
-    """
-    Turn a Unicode string to plain ASCII
-    Thanks to https://stackoverflow.com/a/518232/2809427
-    @param s: the string
-    @return: the string as ASCII
-    """
-    return ''.join(
-        c for c in unicodedata.normalize('NFD', s)
-        if unicodedata.category(c) != 'Mn'
-    )
-
-
-def preprocess(s: str) -> str:
-    """
-    Lowercase, trim, and remove non-letter characters
-    @param s: the string
-    @return: the preprocessed string
-    """
-    s = unicodeToAscii(s.lower().strip())
-    s = re.sub(r"([.!?])", r" \1", s)
-    s = re.sub(r"[^a-zA-Z.!?]+", r" ", s)
-    return s
-
-
-def readLangs(path: str) -> List[List[str]]:
-    """
-    Read, preprocess and return a list containing the input documents.
-    @param path: the path to the .bin file containing the input documents
-    @return: a list containing the documents in pairs with themselves
-    """
-    print("Reading documents...")
-    articles = batch_helper.load_articles(path)
-
-    pairs = []
-    # train on the whole text
-    for article in articles:
-        text = " ".join(article.abstract_text)
-        pairs.append([text, text])
-
-    sample_count = min(TRAINING_SAMPLES, len(pairs))
-    return pairs[:sample_count]
-
-
-def prepareData(input_type: str, path: str) -> Tuple[Lang, Lang, List[List[str]]]:
-    """
-    Read the input documents and use them to create the necessary language objects.
-    @param input_type: "arxiv" or "pubmed" depending on the dataset used
-    @param path: the path to the data .bin file
-    @return: the input and output language objects and the input and output document pairs
-    """
-
-    # TODO: utilize validation data
-    if input_type == "arxiv":
-        train_data_path = "{}/arxiv_train.pk.bin".format(path)
-        val_data_path = "{}/arxiv_val.pk.bin".format(path)
-    elif input_type == "pubmed":
-        train_data_path = "{}/pubmed_train.pk.bin".format(path)
-        val_data_path = "{}/pubmed_val.pk.bin".format(path)
-    else:
-        raise NotImplementedError("Input type must be either 'arxiv' or 'pubmed', not " + input_type)
-
-    # we will use a single language object as both input and output
-    lang = Lang("article")
-
-    pairs = readLangs(train_data_path)
-    print("Read %s sentence pairs" % len(pairs))
-
-    print("Counting words...")
-    for pair in pairs:
-        lang.addSentence(pair[0])
-
-    # debug
-    print("Counted words:")
-    print(lang.name, lang.n_words)
-
-    return lang, lang, pairs
-
-
-def asMinutes(s):
-    m = math.floor(s / 60)
-    s -= m * 60
-    return '%dm %ds' % (m, s)
-
-
-def timeSince(since, percent):
-    now = time.time()
-    s = now - since
-    es = s / percent
-    rs = es - s
-    return '%s (- %s)' % (asMinutes(s), asMinutes(rs))
+    print("Training finished, autoencoder model saved at " + path)
 
 
 if __name__ == "__main__":
-    print(sys.argv)
-    if len(sys.argv) == 3:
-        main(sys.argv[1], sys.argv[2])
+    if len(sys.argv) == 2:
+        run_training(config_path=sys.argv[1])
     else:
-        print("Usage: python train_autoencoder.py input_type data_path")
-        print("\tWhere input_type one of 'arxiv', 'pubmed' depending on the dataset used")
+        print("Usage: python train_autoencoder.py config_path")
