@@ -8,7 +8,6 @@ sys.path.insert(0, os.getcwd()+'/models/')  # to import modules in models
 
 import random
 from datetime import datetime
-from collections import OrderedDict
 
 # PyTorch
 import torch
@@ -24,6 +23,7 @@ from batch_helper import load_podcast_data, load_articles, PodcastBatcher, Artic
 from data.podcast_processor import PodcastEpisode
 from data.arxiv_processor import ResearchArticle
 from models.localattn import LoBART
+
 
 def run_training(config_path):
     # Load Config
@@ -42,7 +42,8 @@ def run_training(config_path):
     bart_tokenizer = BartTokenizer.from_pretrained(config['bart_tokenizer'])
 
     if config['selfattn'] == 'full':
-        bart_model  = BartForConditionalGeneration.from_pretrained(pretrained_model_name_or_path=config['bart_weights'], config=bart_config)
+        bart_model  = BartForConditionalGeneration.from_pretrained(pretrained_model_name_or_path=config['bart_weights'],
+                                                                   config=bart_config)
     elif config['selfattn'] == 'local':
         window_width = config['window_width']
         xspan        = config['multiple_input_span']
@@ -58,7 +59,8 @@ def run_training(config_path):
     print(bart_model)
     print(bart_config)
     print("#parameters:", sum(p.numel() for p in bart_model.parameters() if p.requires_grad))
-    if torch_device == 'cuda': bart_model.cuda()
+    if torch_device == 'cuda':
+        bart_model.cuda()
 
     # Optimizer --- currently only support Adam
     if config['optimizer'] == 'adam':
@@ -71,7 +73,6 @@ def run_training(config_path):
 
     # Data ---- podcast | arxiv | pubmed
     if config['dataset'] == 'podcast':
-        # train_data  = load_podcast_data(config['data_dir'], sets=-1)   # -1 = training set, -1 means set0,..,set9 (excluding 10)
         train_data  = load_podcast_data(config['data_dir'], sets=[10])   # -1 = training set, -1 means set0,..,set9 (excluding 10)
         val_data    = load_podcast_data(config['data_dir'], sets=[10]) # 10 = valid set
         batcher     = PodcastBatcher(bart_tokenizer, bart_config, config['max_target_len'], train_data, torch_device)
@@ -115,7 +116,7 @@ def run_training(config_path):
 
     while training_step < total_step:
 
-        input_ids, attention_mask, target_ids, target_attention_mask = batcher.get_a_batch(batch_size=batch_size, pad_to_max_length=False)
+        input_ids, attention_mask, target_ids, target_attention_mask = batcher.get_a_batch(batch_size, False, False)
         shifted_target_ids, shifted_target_attention_mask = batcher.shifted_target_left(target_ids, target_attention_mask)
 
         # BART forward
@@ -178,10 +179,11 @@ def validation(bart, bart_config, val_batcher, batch_size):
     sum_loss = 0
     sum_token = 0
     while val_batcher.epoch_counter < 1:
-    # for i in range(5):
-        input_ids, attention_mask, target_ids, target_attention_mask = val_batcher.get_a_batch(batch_size=batch_size, pad_to_max_length=False)
+        input_ids, attention_mask, target_ids, target_attention_mask = val_batcher.get_a_batch(batch_size=batch_size,
+                                                                                               pad_to_max_length=False)
 
-        shifted_target_ids, shifted_target_attention_mask = val_batcher.shifted_target_left(target_ids, target_attention_mask)
+        shifted_target_ids, shifted_target_attention_mask = val_batcher.shifted_target_left(target_ids,
+                                                                                            target_attention_mask)
         x = bart(
             input_ids=input_ids, attention_mask=attention_mask,
             decoder_input_ids=target_ids, decoder_attention_mask=target_attention_mask,
@@ -202,7 +204,7 @@ def validation(bart, bart_config, val_batcher, batch_size):
 
 
 if __name__ == "__main__":
-    if(len(sys.argv) == 2):
+    if len(sys.argv) == 2:
         run_training(sys.argv[1])
     else:
         print("Usage: python train_abssum.py config_path")
