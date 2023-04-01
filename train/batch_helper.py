@@ -115,7 +115,7 @@ class PodcastBatcher(object):
             self.epoch_counter += 1
         return
 
-    def get_a_batch(self, batch_size, pad_to_max_length=True):
+    def get_a_batch(self, batch_size, translate_to_self=False, pad_to_max_length=True):
         batch_count = 0
         inputs = [None for _ in range(batch_size)]
         targets = [None for _ in range(batch_size)]
@@ -126,7 +126,12 @@ class PodcastBatcher(object):
                 continue
 
             inputs[batch_count] = self.podcasts[self.cur_id].transcription
-            targets[batch_count] = self.podcasts[self.cur_id].description
+
+            # if training the autoencoder, use the input as the target
+            if translate_to_self:
+                targets[batch_count] = inputs[batch_count]
+            else:
+                targets[batch_count] = self.podcasts[self.cur_id].description
 
             self.increment_data_id()
             batch_count += 1
@@ -194,14 +199,19 @@ class ArticleBatcher(object):
             self.epoch_counter += 1
         return
 
-    def get_a_batch(self, batch_size, pad_to_max_length=True):
+    def get_a_batch(self, batch_size, translate_to_self=False, pad_to_max_length=True):
         batch_count = 0
         inputs = [None for _ in range(batch_size)]
         targets = [None for _ in range(batch_size)]
 
         while batch_count < batch_size:
             inputs[batch_count] = " ".join(self.articles[self.cur_id].article_text)
-            targets[batch_count] = " ".join(self.articles[self.cur_id].abstract_text)
+
+            # if training the autoencoder, use the input as the target
+            if translate_to_self:
+                targets[batch_count] = inputs[batch_count]
+            else:
+                targets[batch_count] = " ".join(self.articles[self.cur_id].abstract_text)
 
             self.increment_data_id()
             batch_count += 1
@@ -220,6 +230,7 @@ class ArticleBatcher(object):
                                                                  max_length=self.max_sum_len, return_tensors='pt')
 
         # bos_token_id = 0
+
         target_ids = batch_encoded_targets['input_ids']
         target_attention_mask = batch_encoded_targets['attention_mask']
 
