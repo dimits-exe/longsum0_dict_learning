@@ -1,13 +1,6 @@
-import train_abssum
-
 import os
+import pickle
 import sys
-
-import transformers
-
-sys.path.insert(0, os.getcwd() + '/data/')  # to import modules in data
-sys.path.insert(0, os.getcwd() + '/models/')  # to import modules in models
-
 import random
 from datetime import datetime
 
@@ -18,16 +11,22 @@ import torch.optim as optim
 
 # HuggingFace
 from transformers import BartTokenizer, BartForConditionalGeneration
+import transformers
+
+sys.path.insert(0, os.getcwd() + '/data/')  # to import modules in data
+sys.path.insert(0, os.getcwd() + '/models/')  # to import modules in models
 
 # This project
-from utils import parse_config, print_config, adjust_lr
-from batch_helper import load_podcast_data, load_articles, PodcastBatcher, ArticleBatcher
+import train.train_abssum
+from train.utils import parse_config, print_config, adjust_lr
+from train.batch_helper import load_podcast_data, load_articles, PodcastBatcher, ArticleBatcher
 from data.podcast_processor import PodcastEpisode
 from data.arxiv_processor import ResearchArticle
 from models.localattn import LoBART
 
 
-MODEL_DIR = "trained_models"
+MODEL_DIR = "C:\\Users\\user\\Documents\\university\\research\\dict_learning\\train\\trained_models"
+MODEL_CONFIG_NAME = "autoencoder_config.bin"
 MODEL_FILE_NAME = "autoencoder.pt"
 
 
@@ -189,10 +188,14 @@ def run_training(config_path) -> None:
 
     # save final model
     os.makedirs(MODEL_DIR, exist_ok=True)
-    path = os.path.join(MODEL_DIR, MODEL_FILE_NAME)
-    torch.save(state, path)
+    model_path = os.path.join(MODEL_DIR, MODEL_FILE_NAME)
+    torch.save(bart_model.state_dict(), model_path)
 
-    print("Training finished, autoencoder model saved at " + path)
+    config_path = os.path.join(MODEL_DIR, MODEL_CONFIG_NAME)
+    with open(config_path, "wb+") as config_file:
+        pickle.dump(bart_config, config_file)
+
+    print("Training finished, autoencoder model saved at " + MODEL_DIR)
 
 
 if __name__ == "__main__":
