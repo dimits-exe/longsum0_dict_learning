@@ -19,18 +19,21 @@ class DocDictionary:
         with open(model_config_path, "rb") as config_file:
             config = pickle.load(config_file)
 
-        max_length: int = config.max_position_embeddings  # TODO: take this from file
-        vocab_length: int = config.vocab_size
+        max_length: int = config.max_position_embeddings
+        vocab_length: int = config.max_position_embeddings
 
-        self.dict_tensor = torch.rand(max_length, vocab_length).to(device)
+        # TODO: run in GPU
+        device = "cpu"
+        self.dict_tensor = torch.rand((max_length, vocab_length), requires_grad=True).to(device)
         self.autoencoder = _load_autoencoder(model_file_path, config, device)
+        self.device = device
 
-    def get_dict_loss(self, input_ids, attention_mask, encoder_logits) -> float:
-        loss = self._dict_loss(encoder_logits, input_ids, attention_mask) + self._ortho_loss()
-        # TODO: back-propagate A matrix
+    def get_dict_loss(self, input_ids, attention_mask, encoder_logits) -> torch.Tensor:
+        # collect average from batch
+        loss = self._dict_loss(input_ids, attention_mask, torch.mean(encoder_logits, dim=0)) + self._ortho_loss()
         return loss
 
-    def _dict_loss(self, input_ids, attention_mask, encoder_logits) -> float:
+    def _dict_loss(self, input_ids, attention_mask, encoder_logits) -> torch.Tensor:
         """
         Calculates the ||h-Ae|| cost, where h the base model's logits, A the dict matrix and
         e the pretrained autoencoder's logits.
@@ -38,16 +41,16 @@ class DocDictionary:
         @return: the dictionary loss
         """
         h = self._pass_through_encoder(input_ids, attention_mask)
-        diff = h - torch.tensordot(self.dict_tensor, encoder_logits)
+        diff = h - torch.mm(encoder_logits.to(self.device), self.dict_tensor)
         return torch.norm(diff, p=2)
 
-    def _ortho_loss(self) -> float:
+    def _ortho_loss(self) -> torch.Tensor:
         """
         Calculates the ||A A^T - I|| cost, where A the dict matrix.
         @return: the orthogonality loss
         """
         a = self.dict_tensor
-        diff = torch.tensordot(a, torch.t(a)) - torch.eye(a.size[0], a.size[1])
+        diff = torch.mm(a, torch.t(a)) - torch.eye(a.size()[0], a.size()[1]).to(self.device)
         return torch.norm(diff, p=2)
 
     def _pass_through_encoder(self, input_ids, attention_mask) -> torch.Tensor:
@@ -56,16 +59,14 @@ class DocDictionary:
         @return: the logits
         """
         # BART forward
-        x = self.autoencoder(
-            input_ids=input_ids, attention_mask=attention_mask
-        )
+        x = self.autoencoder(input_ids=input_ids.to(self.device), attention_mask=attention_mask.to(self.device))
         # x[0] # decoder output
         # x[1] # encoder output
         lm_logits = x[1]
         return lm_logits
 
 
-def _load_autoencoder(model_file_path: str, config: BartConfig, device: torch.device) -> nn.Module:
+def _load_autoencoder(model_file_path: str, config: BartConfig, device: str | torch.device) -> nn.Module:
     model = LoBART(config)
     state_dict = torch.load(model_file_path)
     model.load_state_dict(state_dict)
