@@ -28,7 +28,9 @@ from models.localattn import LoBART
 from models.dictionary import DocDictionary
 
 
-def run_training(config_path):
+def run_training(config_path, with_dict=True):
+    global_dict = None
+
     # Load Config
     config = parse_config("config", config_path)
     print_config(config)
@@ -65,16 +67,20 @@ def run_training(config_path):
     if torch_device == 'cuda':
         bart_model.cuda()
 
-    # Global dictionary
-    model_path: str = os.path.join(train_autoencoder.MODEL_DIR, train_autoencoder.MODEL_FILE_NAME)
-    config_path = os.path.join(train_autoencoder.MODEL_DIR, train_autoencoder.MODEL_CONFIG_NAME)
-    global_dict = DocDictionary(model_path, config_path, torch_device)
+    if with_dict:
+        # Global dictionary
+        model_path: str = os.path.join(train_autoencoder.MODEL_DIR, train_autoencoder.MODEL_FILE_NAME)
+        config_path = os.path.join(train_autoencoder.MODEL_DIR, train_autoencoder.MODEL_CONFIG_NAME)
+        global_dict = DocDictionary(model_path, config_path, torch_device)
 
     # Optimizer --- currently only support Adam
     if config['optimizer'] == 'adam':
         # lr here doesn't matter as it will be changed by .adjust_lr()
         parameters = list(filter(lambda p: p.requires_grad, bart_model.parameters()))
-        parameters.append(global_dict.dict_tensor)
+
+        if with_dict:
+            parameters.append(global_dict.dict_tensor)
+
         optimizer = optim.Adam(parameters, lr=0.001, betas=(0.9, 0.999), eps=1e-08, weight_decay=0)
         optimizer.zero_grad()
     else:
@@ -138,8 +144,10 @@ def run_training(config_path):
         lm_logits = x[0]
 
         loss = criterion(lm_logits.view(-1, bart_config.vocab_size), shifted_target_ids.view(-1))
-        # add l_ortho and l_dict to loss function
-        loss += global_dict.get_dict_loss(input_ids, attention_mask, x[1])
+
+        if with_dict:
+            # add l_ortho and l_dict to loss function
+            loss += global_dict.get_dict_loss(input_ids, attention_mask, x[1])
 
         shifted_target_attention_mask = shifted_target_attention_mask.view(-1)
         loss = (loss * shifted_target_attention_mask).sum() / shifted_target_attention_mask.sum()
@@ -216,7 +224,15 @@ def validation(bart, bart_config, val_batcher, batch_size):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) == 2:
-        run_training(sys.argv[1])
+    if len(sys.argv) == 3:
+        if sys.argv[2].lower() == "y":
+            with_dict = True
+        elif sys.argv[2].lower() == "n":
+            with_dict = False
+        else:
+            print("Third argument must be 'y' or 'n'")
+            sys.exit(0)
+
+        run_training(sys.argv[1], with_dict)
     else:
-        print("Usage: python train_abssum.py config_path")
+        print("Usage: python train_abssum.py config_path [y|n]")
