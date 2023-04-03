@@ -3,6 +3,8 @@ import sys
 
 import transformers
 
+from train import train_autoencoder
+
 sys.path.insert(0, os.getcwd()+'/data/')  # to import modules in data
 sys.path.insert(0, os.getcwd()+'/models/')  # to import modules in models
 
@@ -23,6 +25,7 @@ from train.batch_helper import load_podcast_data, load_articles, PodcastBatcher,
 from data.podcast_processor import PodcastEpisode
 from data.arxiv_processor import ResearchArticle
 from models.localattn import LoBART
+from models.dictionary import DocDictionary
 
 
 def run_training(config_path):
@@ -62,14 +65,20 @@ def run_training(config_path):
     if torch_device == 'cuda':
         bart_model.cuda()
 
+    # Global dictionary
+    model_path: str = os.path.join(train_autoencoder.MODEL_DIR, train_autoencoder.MODEL_FILE_NAME)
+    config_path = os.path.join(train_autoencoder.MODEL_DIR, train_autoencoder.MODEL_CONFIG_NAME)
+    global_dict = DocDictionary(model_path, config_path, torch_device)
+
     # Optimizer --- currently only support Adam
     if config['optimizer'] == 'adam':
         # lr here doesn't matter as it will be changed by .adjust_lr()
-        optimizer = optim.Adam(filter(lambda p: p.requires_grad, bart_model.parameters()), lr=0.001,betas=(0.9,0.999),eps=1e-08,weight_decay=0)
+        parameters = list(filter(lambda p: p.requires_grad, bart_model.parameters()))
+        parameters.append(global_dict.dict_tensor)
+        optimizer = optim.Adam(parameters, lr=0.001, betas=(0.9, 0.999), eps=1e-08, weight_decay=0)
         optimizer.zero_grad()
     else:
         raise ValueError("Current version only supports Adam")
-
 
     # Data ---- podcast | arxiv | pubmed
     if config['dataset'] == 'podcast':
@@ -129,6 +138,9 @@ def run_training(config_path):
         lm_logits = x[0]
 
         loss = criterion(lm_logits.view(-1, bart_config.vocab_size), shifted_target_ids.view(-1))
+        # add l_ortho and l_dict to loss function
+        loss += global_dict.get_dict_loss(input_ids, attention_mask, x[1])
+
         shifted_target_attention_mask = shifted_target_attention_mask.view(-1)
         loss = (loss * shifted_target_attention_mask).sum() / shifted_target_attention_mask.sum()
         loss.backward()
