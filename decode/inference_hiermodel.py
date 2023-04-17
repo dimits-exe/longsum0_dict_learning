@@ -10,9 +10,9 @@ import torch
 import numpy as np
 from nltk import tokenize
 from transformers import BartTokenizer, BertTokenizer
-from podcast_processor import PodcastEpisode
-from arxiv_processor import ResearchArticle
-from hiermodel import EncoderDecoder, EXTLabeller
+from data.podcast_processor import PodcastEpisode
+from data.arxiv_processor import ResearchArticle
+from models.hiermodel import EncoderDecoder, EXTLabeller
 
 def inference_hiermodel(args):
     start_id   = args['start_id']
