@@ -1,18 +1,18 @@
 [config]
 bart_weights   = facebook/bart-large-cnn
 bart_tokenizer = facebook/bart-large
-model_name     = lobart1k_arxiv_truncate_v0
+model_name     = autoencoder
 save_dir       = trained_models
 dataset        = arxiv
-data_dir       = ../data/pipeline/arxiv
+data_dir       = ../data/input/arxiv
 optimizer      = adam
 max_target_len = 400
 lr0            = 0.002
 warmup         = 20000
 batch_size     = 1
 gradient_accum = 2
-valid_step     = 100
-total_step     = 10
+valid_step     = 1000
+total_step     = 100
 early_stop     = 3
 random_seed    = 2525
 use_gpu        = True

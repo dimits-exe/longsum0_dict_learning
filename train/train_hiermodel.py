@@ -16,10 +16,11 @@ from transformers import BertTokenizer
 
 from utils import parse_config, print_config, adjust_lr
 from batch_helper import load_podcast_data_xtra, load_articles, HierPodcastBatcher, HierArticleBatcher
-from podcast_processor import PodcastEpisode
-from arxiv_processor import ResearchArticle
-from create_extractive_label import PodcastEpisodeXtra, ResearchArticleXtra
-from hiermodel import EncoderDecoder, EXTLabeller
+from data.podcast_processor import PodcastEpisode
+from data.arxiv_processor import ResearchArticle
+from data.create_extractive_label import PodcastEpisodeXtra, ResearchArticleXtra
+from models.hiermodel import EncoderDecoder, EXTLabeller
+
 
 def run_training(config_path):
     # Load Config
@@ -70,8 +71,6 @@ def run_training(config_path):
         val_batcher = HierArticleBatcher(bert_tokenizer, config, val_data, torch_device)
     else:
         raise ValueError("Dataset not exist: only |podcast|arxiv|pubmed|")
-
-
 
     criterion = nn.NLLLoss(reduction='none')
     ext_criterion = nn.BCELoss(reduction='none')
@@ -182,6 +181,7 @@ def run_training(config_path):
 
     print("End of training hierarchical RNN model")
 
+
 def evaluate(model, ext_labeller, gamma, val_batcher, batch_size, config, torch_device):
     print("start validating")
     criterion = nn.NLLLoss(reduction='none')
@@ -225,12 +225,14 @@ def evaluate(model, ext_labeller, gamma, val_batcher, batch_size, config, torch_
     avg_eval_loss = (1-gamma)*avg_eval_loss1 + gamma*avg_eval_loss2
     return avg_eval_loss
 
+
 def length2mask(length, batch_size, max_len, torch_device):
     mask = torch.zeros((batch_size, max_len), dtype=torch.float, device=torch_device)
     for bn in range(batch_size):
         l = length[bn].item()
         mask[bn,:l].fill_(1.0)
     return mask
+
 
 def shift_decoder_target(target, tgt_len, torch_device, mask_offset=False):
     # MASK_TOKEN_ID = 103
@@ -258,8 +260,9 @@ def shift_decoder_target(target, tgt_len, torch_device, mask_offset=False):
 
     return decoder_target, decoder_mask
 
+
 if __name__ == "__main__":
-    if(len(sys.argv) == 2):
+    if len(sys.argv) == 2:
         run_training(sys.argv[1])
     else:
         print("Usage: python train_hiermodel.py config_path")

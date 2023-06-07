@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<module type="PYTHON_MODULE" version="4">
+  <component name="NewModuleRootManager">
+    <content url="file://$MODULE_DIR$">
+      <excludeFolder url="file://$MODULE_DIR$/data/arxiv-dataset" />
+      <excludeFolder url="file://$MODULE_DIR$/data/pubmed-dataset" />
+      <excludeFolder url="file://$MODULE_DIR$/data/datasets" />
+      <excludeFolder url="file://$MODULE_DIR$/data/arxiv" />
+      <excludeFolder url="file://$MODULE_DIR$/train/.data/multi30k" />
+      <excludeFolder url="file://$MODULE_DIR$/data/input" />
+      <excludeFolder url="file://$MODULE_DIR$/data/input/arxiv" />
+      <excludeFolder url="file://$MODULE_DIR$/data/input/pubmed" />
+      <excludeFolder url="file://$MODULE_DIR$/train/trained_models" />
+    </content>
+    <orderEntry type="jdk" jdkName="Python 3.7 (dict_learning)" jdkType="Python SDK" />
+    <orderEntry type="sourceFolder" forTests="false" />
+  </component>
+  <component name="PackageRequirementsSettings">
+    <option name="requirementsPath" value="" />
+  </component>
+  <component name="PyDocumentationSettings">
+    <option name="format" value="EPYTEXT" />
+    <option name="myDocStringFormat" value="Epytext" />
+  </component>
+</module>

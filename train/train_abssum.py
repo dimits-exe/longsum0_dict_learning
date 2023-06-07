@@ -1,11 +1,16 @@
 import os
+import pickle
 import sys
-sys.path.insert(0, os.getcwd()+'/data/') # to import modules in data
-sys.path.insert(0, os.getcwd()+'/models/') # to import modules in models
+
+import transformers
+
+from train import train_autoencoder
+
+sys.path.insert(0, os.getcwd()+'/data/')  # to import modules in data
+sys.path.insert(0, os.getcwd()+'/models/')  # to import modules in models
 
 import random
 from datetime import datetime
-from collections import OrderedDict
 
 # PyTorch
 import torch
@@ -16,29 +21,40 @@ import torch.optim as optim
 from transformers import BartTokenizer, BartForConditionalGeneration
 
 # This project
-from utils import parse_config, print_config, adjust_lr
-from batch_helper import load_podcast_data, load_articles, PodcastBatcher, ArticleBatcher
-from podcast_processor import PodcastEpisode
-from arxiv_processor import ResearchArticle
-from localattn import LoBART
+from train.utils import parse_config, print_config, adjust_lr
+from train.batch_helper import load_podcast_data, load_articles, PodcastBatcher, ArticleBatcher
+from data.podcast_processor import PodcastEpisode
+from data.arxiv_processor import ResearchArticle
+from models.localattn import LoBART
+from models.dictionary import DocDictionary
 
-def run_training(config_path):
+
+def run_training(config_path, with_dict=True):
+    global_dict = None
+
     # Load Config
     config = parse_config("config", config_path)
     print_config(config)
 
     # uses GPU in training or not
-    if torch.cuda.is_available() and config['use_gpu']: torch_device = 'cuda'
-    else: torch_device = 'cpu'
+    if torch.cuda.is_available() and config['use_gpu']:
+        print("Using GPU")
+        torch_device = 'cuda'
+    else:
+        print("Using CPU")
+        torch_device = 'cpu'
 
+    bart_config = transformers.BartConfig(encoder_layers=2, decoder_layers=2, vocab_size=50264)
     bart_tokenizer = BartTokenizer.from_pretrained(config['bart_tokenizer'])
+
     if config['selfattn'] == 'full':
-        bart_model  = BartForConditionalGeneration.from_pretrained(config['bart_weights'])
+        bart_model  = BartForConditionalGeneration.from_pretrained(pretrained_model_name_or_path=config['bart_weights'],
+                                                                   config=bart_config)
     elif config['selfattn'] == 'local':
         window_width = config['window_width']
         xspan        = config['multiple_input_span']
         attention_window = [window_width] * 12 # different window size for each layer can be defined here too!
-        bart_model = LoBART.from_pretrained(config['bart_weights'])
+        bart_model = LoBART.from_pretrained(pretrained_model_name_or_path=config['bart_weights'], config=bart_config)
         bart_model.swap_fullattn_to_localattn(attention_window=attention_window)
         bart_model.expand_learned_embed_positions(multiple=xspan, cut=xspan*2)
     else:
@@ -49,20 +65,30 @@ def run_training(config_path):
     print(bart_model)
     print(bart_config)
     print("#parameters:", sum(p.numel() for p in bart_model.parameters() if p.requires_grad))
-    if torch_device == 'cuda': bart_model.cuda()
+    if torch_device == 'cuda':
+        bart_model.cuda()
+
+    if with_dict:
+        # Global dictionary
+        model_path: str = os.path.join(train_autoencoder.MODEL_DIR, train_autoencoder.MODEL_FILE_NAME)
+        config_path = os.path.join(train_autoencoder.MODEL_DIR, train_autoencoder.MODEL_CONFIG_NAME)
+        global_dict = DocDictionary(model_path, config_path, torch_device)
 
     # Optimizer --- currently only support Adam
     if config['optimizer'] == 'adam':
         # lr here doesn't matter as it will be changed by .adjust_lr()
-        optimizer = optim.Adam(filter(lambda p: p.requires_grad, bart_model.parameters()), lr=0.001,betas=(0.9,0.999),eps=1e-08,weight_decay=0)
+        parameters = list(filter(lambda p: p.requires_grad, bart_model.parameters()))
+
+        if with_dict:
+            parameters.append(global_dict.dict_tensor)
+
+        optimizer = optim.Adam(parameters, lr=0.001, betas=(0.9, 0.999), eps=1e-08, weight_decay=0)
         optimizer.zero_grad()
     else:
         raise ValueError("Current version only supports Adam")
 
-
     # Data ---- podcast | arxiv | pubmed
     if config['dataset'] == 'podcast':
-        # train_data  = load_podcast_data(config['data_dir'], sets=-1)   # -1 = training set, -1 means set0,..,set9 (excluding 10)
         train_data  = load_podcast_data(config['data_dir'], sets=[10])   # -1 = training set, -1 means set0,..,set9 (excluding 10)
         val_data    = load_podcast_data(config['data_dir'], sets=[10]) # 10 = valid set
         batcher     = PodcastBatcher(bart_tokenizer, bart_config, config['max_target_len'], train_data, torch_device)
@@ -106,7 +132,7 @@ def run_training(config_path):
 
     while training_step < total_step:
 
-        input_ids, attention_mask, target_ids, target_attention_mask = batcher.get_a_batch(batch_size=batch_size, pad_to_max_length=False)
+        input_ids, attention_mask, target_ids, target_attention_mask = batcher.get_a_batch(batch_size, False, False)
         shifted_target_ids, shifted_target_attention_mask = batcher.shifted_target_left(target_ids, target_attention_mask)
 
         # BART forward
@@ -119,6 +145,11 @@ def run_training(config_path):
         lm_logits = x[0]
 
         loss = criterion(lm_logits.view(-1, bart_config.vocab_size), shifted_target_ids.view(-1))
+
+        if with_dict:
+            # add l_ortho and l_dict to loss function
+            loss += global_dict.get_dict_loss(input_ids, attention_mask, x[1])
+
         shifted_target_attention_mask = shifted_target_attention_mask.view(-1)
         loss = (loss * shifted_target_attention_mask).sum() / shifted_target_attention_mask.sum()
         loss.backward()
@@ -162,6 +193,16 @@ def run_training(config_path):
         training_step += 1
     print("Finish training abstractive summarizer")
 
+    # save final model
+    savepath = os.path.join(config['save_dir'], "lobart.pt")
+    config_path = os.path.join(config["save_dir"], "lobart_config.bin")
+
+    torch.save(bart_model.state_dict(), savepath)
+    with open(config_path, "wb+") as config_file:
+        pickle.dump(bart_model.config, config_file)
+
+    print("Final model saved at {}".format(savepath))
+
 
 def validation(bart, bart_config, val_batcher, batch_size):
     print("start validating")
@@ -169,10 +210,11 @@ def validation(bart, bart_config, val_batcher, batch_size):
     sum_loss = 0
     sum_token = 0
     while val_batcher.epoch_counter < 1:
-    # for i in range(5):
-        input_ids, attention_mask, target_ids, target_attention_mask = val_batcher.get_a_batch(batch_size=batch_size, pad_to_max_length=False)
+        input_ids, attention_mask, target_ids, target_attention_mask = val_batcher.get_a_batch(batch_size=batch_size,
+                                                                                               pad_to_max_length=False)
 
-        shifted_target_ids, shifted_target_attention_mask = val_batcher.shifted_target_left(target_ids, target_attention_mask)
+        shifted_target_ids, shifted_target_attention_mask = val_batcher.shifted_target_left(target_ids,
+                                                                                            target_attention_mask)
         x = bart(
             input_ids=input_ids, attention_mask=attention_mask,
             decoder_input_ids=target_ids, decoder_attention_mask=target_attention_mask,
@@ -193,7 +235,15 @@ def validation(bart, bart_config, val_batcher, batch_size):
 
 
 if __name__ == "__main__":
-    if(len(sys.argv) == 2):
-        run_training(sys.argv[1])
+    if len(sys.argv) == 3:
+        if sys.argv[2].lower() == "y":
+            with_dict = True
+        elif sys.argv[2].lower() == "n":
+            with_dict = False
+        else:
+            print("Third argument must be 'y' or 'n'")
+            sys.exit(0)
+
+        run_training(sys.argv[1], with_dict)
     else:
-        print("Usage: python train_abssum.py config_path")
+        print("Usage: python train_abssum.py config_path [y|n]")

@@ -1,8 +1,8 @@
 [config]
-model_name     = bart1k_podcast_truncate_v0
+model_name     = bart1k_pubmed_truncate_v0
 save_dir       = trained_models
-dataset        = podcast
-data_dir       = ../summariser2/lib/data/f1_oracle/
+dataset        = pubmed
+data_dir       = C:/Users/user/Documents/university/research/dict_learning/data/data/pubmed
 optimizer      = adam
 num_utterances = 1000
 num_words      = 50
@@ -18,8 +18,8 @@ lr0            = 0.002
 warmup         = 10000
 batch_size     = 1
 gradient_accum = 2
-valid_step     = 20000
-total_step     = 20000000
+valid_step     = 100
+total_step     = 1000
 early_stop     = 3
 random_seed    = 2525
 use_gpu        = True
