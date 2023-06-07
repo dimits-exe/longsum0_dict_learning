@@ -1,4 +1,5 @@
 import os
+import pickle
 import sys
 
 import transformers
@@ -191,6 +192,16 @@ def run_training(config_path, with_dict=True):
 
         training_step += 1
     print("Finish training abstractive summarizer")
+
+    # save final model
+    savepath = os.path.join(config['save_dir'], "lobart.pt")
+    config_path = os.path.join(config["save_dir"], "lobart_config.bin")
+
+    torch.save(bart_model.state_dict(), savepath)
+    with open(config_path, "wb+") as config_file:
+        pickle.dump(bart_model.config, config_file)
+
+    print("Final model saved at {}".format(savepath))
 
 
 def validation(bart, bart_config, val_batcher, batch_size):

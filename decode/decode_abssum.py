@@ -1,5 +1,8 @@
 import os
 import sys
+
+import nltk
+
 sys.path.insert(0, os.getcwd()+'/data/') # to import modules in data
 sys.path.insert(0, os.getcwd()+'/models/') # to import modules in models
 
@@ -10,9 +13,9 @@ import argparse
 import torch
 from nltk import tokenize
 from transformers import BartTokenizer, BartForConditionalGeneration
-from podcast_processor import PodcastEpisode
-from arxiv_processor import ResearchArticle
-from localattn import LoBART
+from data.podcast_processor import PodcastEpisode
+from data.arxiv_processor import ResearchArticle
+from models.localattn import LoBART
 
 def decode(args):
 
@@ -24,27 +27,43 @@ def decode(args):
     if torch.cuda.is_available() and args['use_gpu']: torch_device = 'cuda'
     else: torch_device = 'cpu'
 
+
     bart_tokenizer = BartTokenizer.from_pretrained('facebook/bart-large')
+    """
     if args['selfattn'] == 'full':
         bart_model  = BartForConditionalGeneration.from_pretrained('facebook/bart-large-cnn')
     elif args['selfattn'] == 'local':
+
         window_width = args['window_width']
         xspan        = args['multiple_input_span']
         attention_window = [window_width] * 12 # different window size for each layer can be defined here too!
         bart_model = LoBART.from_pretrained('facebook/bart-large-cnn')
         bart_model.swap_fullattn_to_localattn(attention_window=attention_window)
         bart_model.expand_learned_embed_positions(multiple=xspan, cut=xspan*2)
+
     else:
         raise ValueError("selfattn: full (BART) | local (LoBART)")
+    """
+    nltk.download('punkt')
 
     # trained models path
-    trained_model_path = args['load']
+    model_dir = args["load"]
+    model_config_path = os.path.join(model_dir, "lobart_config.bin")
+    model_file_path = os.path.join(model_dir, "lobart.pt")
+
+    model_dir = torch.load(model_file_path)
+    with open(model_config_path, "rb") as config_file:
+        config = pickle.load(config_file)
+
+    bart_model = LoBART(config)
+    bart_model.load_state_dict(model_dir)
+
     if torch_device == 'cuda':
         bart_model.cuda()
-        state = torch.load(trained_model_path)
+        state = torch.load(model_file_path)
     else:
-        state = torch.load(trained_model_path, map_location=torch.device('cpu'))
-    model_state_dict = state['model']
+        state = torch.load(model_file_path, map_location=torch.device('cpu'))
+    model_state_dict = state
     bart_model.load_state_dict(model_state_dict)
 
     # data
@@ -114,7 +133,10 @@ def decode(args):
                 summary_sentences = tokenize.sent_tokenize(summary_txt)
                 new_summary_sentences = [" ".join(tokenize.word_tokenize(sent)) for sent in summary_sentences]
                 summary_out = "\n".join(new_summary_sentences)
-                file.write(summary_out)
+                try:
+                    file.write(summary_out)
+                except UnicodeError:
+                    print("Summarization failed: unknown character encountered")
         else:
             raise ValueError("Dataset not exist: only |podcast|arxiv|pubmed|")
         print("write:", out_path)

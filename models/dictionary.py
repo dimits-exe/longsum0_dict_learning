@@ -29,8 +29,9 @@ class DocDictionary:
         self.device = device
 
     def get_dict_loss(self, input_ids, attention_mask, encoder_logits) -> torch.Tensor:
-        # collect average from batch
-        loss = self._dict_loss(input_ids, attention_mask, torch.mean(encoder_logits, dim=0)) + self._ortho_loss()
+        # TODO: figure out how to iterate over the 0th dimension
+        assert encoder_logits.shape[0] == 1, "Use batches of 1 for now"
+        loss = self._dict_loss(input_ids, attention_mask, encoder_logits[0] + self._ortho_loss())
         return loss
 
     def _dict_loss(self, input_ids, attention_mask, encoder_logits) -> torch.Tensor:

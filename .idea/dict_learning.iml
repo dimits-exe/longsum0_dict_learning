@@ -6,11 +6,11 @@
       <excludeFolder url="file://$MODULE_DIR$/data/pubmed-dataset" />
       <excludeFolder url="file://$MODULE_DIR$/data/datasets" />
       <excludeFolder url="file://$MODULE_DIR$/data/arxiv" />
-      <excludeFolder url="file://$MODULE_DIR$/data/data/arxiv" />
-      <excludeFolder url="file://$MODULE_DIR$/data/data/pubmed" />
       <excludeFolder url="file://$MODULE_DIR$/train/.data/multi30k" />
+      <excludeFolder url="file://$MODULE_DIR$/data/input" />
+      <excludeFolder url="file://$MODULE_DIR$/data/input/arxiv" />
+      <excludeFolder url="file://$MODULE_DIR$/data/input/pubmed" />
       <excludeFolder url="file://$MODULE_DIR$/train/trained_models" />
-      <excludeFolder url="file://$MODULE_DIR$/data/data" />
     </content>
     <orderEntry type="jdk" jdkName="Python 3.7 (dict_learning)" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />

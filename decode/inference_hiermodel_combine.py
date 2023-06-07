@@ -4,8 +4,8 @@ sys.path.insert(0, os.getcwd()+'/data/') # to import modules in data
 import pickle
 import argparse
 from tqdm import tqdm
-from podcast_processor import PodcastEpisode
-from arxiv_processor import ResearchArticle
+from data.podcast_processor import PodcastEpisode
+from data.arxiv_processor import ResearchArticle
 
 def inference_hiermodel_combine(args):
     dataset     = args['dataset']

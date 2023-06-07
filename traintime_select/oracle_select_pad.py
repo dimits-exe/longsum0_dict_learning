@@ -8,8 +8,8 @@ from nltk import tokenize
 from tqdm import tqdm
 
 sys.path.insert(0, os.getcwd()+'/data/') # to import modules in data
-from podcast_processor import PodcastEpisode
-from arxiv_processor import ResearchArticle
+from data.podcast_processor import PodcastEpisode
+from data.arxiv_processor import ResearchArticle
 from transformers import BartTokenizer
 from utils import get_rouge2recall_scores
 

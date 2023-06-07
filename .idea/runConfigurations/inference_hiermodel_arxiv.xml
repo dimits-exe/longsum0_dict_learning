@@ -12,7 +12,7 @@
     <option name="ADD_CONTENT_ROOTS" value="true" />
     <option name="ADD_SOURCE_ROOTS" value="true" />
     <option name="SCRIPT_NAME" value="$PROJECT_DIR$/decode/inference_hiermodel.py" />
-    <option name="PARAMETERS" value="--load trained_models/arxiv_HIER_ATTN.pt --decode_dir hier_output/arxiv --dataset arxiv --datapath ..\data\data\arxiv\arxiv_test.pk.bin --max_abssum_len 1040 --max_num_sent 1000 --max_word_in_sent 50 --start_id 0 --end_id 1027 --use_gpu True" />
+    <option name="PARAMETERS" value="--load trained_models/arxiv_HIER_ATTN.pt --decode_dir ../data/pipeline/model_filtered/arxiv --dataset arxiv --datapath ..\data\input\arxiv\arxiv_test.pk.bin --max_abssum_len 1040 --max_num_sent 1000 --max_word_in_sent 50 --start_id 0 --end_id 1027 --use_gpu True" />
     <option name="SHOW_COMMAND_LINE" value="false" />
     <option name="EMULATE_TERMINAL" value="false" />
     <option name="MODULE_MODE" value="false" />
